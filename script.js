@@ -2,82 +2,97 @@ let map;
 let infoWindow;
 
 async function initMap() {
-    const { Map } = await google.maps.importLibrary("maps");
-    const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+  // Request needed libraries
+  const { Map } = await google.maps.importLibrary("maps");
+  
+  map = new Map(document.getElementById("map"), {
+    center: { lat: 12.9716, lng: 77.5946 }, // Default (e.g., Bangalore)
+    zoom: 14,
+    mapId: "d5a1421cdd562869e20e5d49D", // Replace with your actual Map ID from Google Console
+  });
 
-    map = new Map(document.getElementById("map"), {
-        center: { lat: 12.9716, lng: 77.5946 },
-        zoom: 14,
-    });
-
-    infoWindow = new google.maps.InfoWindow();
-
-    document.getElementById("search-btn").addEventListener("click", findCafesNearMe);
+  infoWindow = new google.maps.InfoWindow();
+  
+  document.getElementById("search-btn").addEventListener("click", findCafesNearMe);
 }
-
-async function findCafesNearMe() {
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-            (position) => {
-                const userLoc = {
-                    lat: position.coords.latitude,
-                    lng: position.coords.longitude,
-                };
-                map.setCenter(userLoc);
-                showCafesPopup(userLoc);
-            },
-            () => {
-                alert("Geolocation failed. Using default location.");
-                showCafesPopup({ lat: 12.9716, lng: 77.5946 });
-            }
-        );
-    } else {
-        alert("Geolocation not supported. Using default location.");
-        showCafesPopup({ lat: 12.9716, lng: 77.5946 });
-    }
-}
-
-async function showCafesPopup(location) {
-    try {
-        const { Place } = await google.maps.importLibrary("places");
-        const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
-
-        const request = {
-            location: location,
-            radius: 2000,
-            type: ["cafe"],
+function findCafesNearMe() {
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const userLoc = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
         };
+        map.setCenter(userLoc);
+        searchForCafes(userLoc);
+      },
+      () => alert("Geolocation failed. Please enable location services.")
+    );
+  } else {
+    alert("Your browser doesn't support geolocation.");
+  }
+}
+async function searchForCafes(location) {
+  const { Place, SearchNearbyRankPreference } = await google.maps.importLibrary("places");
+  const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
 
-        const places = await Place.searchNearby(request);
+  const request = {
+    // UPDATED: Use 'displayName' and ensure it's handled in the loop
+    fields: ["displayName", "location", "formattedAddress", "id"],
+    locationRestriction: { center: location, radius: 2000 },
+    includedPrimaryTypes: ["cafe"],
+    maxResultCount: 15,
+    rankPreference: SearchNearbyRankPreference.POPULARITY,
+  };
 
-        if (!places || places.length === 0) {
-            alert("No cafes found nearby.");
-            return;
+  try {
+    const { places } = await Place.searchNearby(request);
+    const listDiv = document.getElementById("results-list");
+    listDiv.innerHTML = ""; 
+
+    if (places && places.length > 0) {
+      places.forEach((place) => {
+        // IMPROVED LOGIC: Check for displayName and the text inside it
+        let name = "Cafe"; 
+        if (place.displayName && typeof place.displayName === 'string') {
+            name = place.displayName;
+        } else if (place.displayName && place.displayName.text) {
+            name = place.displayName.text;
         }
 
-        let popupContent = "<strong>Cafes near you:</strong><br><ul>";
+        const address = place.formattedAddress || "Address not available";
 
-        places.forEach((place) => {
-            const name = place.name || "Unnamed Cafe";
-            const address = place.address || "No address available";
-
-            popupContent += `<li><b>${name}</b> - ${address}</li>`;
-
-            new AdvancedMarkerElement({
-                position: place.location,
-                map: map,
-                title: name,
-            });
+        const marker = new AdvancedMarkerElement({
+          map: map,
+          position: place.location,
+          title: name,
         });
 
-        popupContent += "</ul>";
+        marker.addListener("click", () => {
+          infoWindow.setContent(`<div style="padding:5px"><strong>${name}</strong><br>${address}</div>`);
+          infoWindow.open(map, marker);
+        });
 
-        infoWindow.setContent(popupContent);
-        infoWindow.setPosition(location);
-        infoWindow.open(map);
-
-    } catch (error) {
-        console.error("Places API error:", error);
-        alert("Error fetching cafes: " + error.message);
+        const item = document.createElement("div");
+        item.className = "cafe-item";
+        item.innerHTML = `
+          <span class="cafe-name">${name}</span>
+          <span class="cafe-address">${address}</span>
+        `;
+        
+        item.onclick = () => {
+          map.panTo(place.location);
+          map.setZoom(16);
+          infoWindow.setContent(`<div style="padding:5px"><strong>${name}</strong><br>${address}</div>`);
+          infoWindow.open(map, marker);
+        };
+        
+        listDiv.appendChild(item);
+      });
+    } else {
+      listDiv.innerHTML = "No cafes found within 2km.";
     }
+  } catch (error) {
+    console.error("Search failed:", error);
+  }
 }
