@@ -3,22 +3,55 @@
 <head>
   <title>Cafe Finder</title>
   <style>
-    #map { height: 100vh; width: 100%; }
+    body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; display: flex; }
+    #sidebar { 
+      width: 350px; 
+      height: 100vh; 
+      overflow-y: auto; 
+      background: #ffffff; 
+      border-right: 1px solid #ddd;
+      padding: 20px;
+      box-sizing: border-box;
+      box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+    }
+    #map { flex-grow: 1; height: 100vh; }
+    
     #search-btn {
       position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 5;
-      padding: 10px 20px;
-      background-color: #fff;
-      border: 1px solid #ccc;
+      top: 20px;
+      left: 370px; 
+      z-index: 10;
+      padding: 12px 24px;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 25px;
       cursor: pointer;
-      border-radius: 5px;
+      font-weight: bold;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+      transition: background 0.3s;
     }
+    #search-btn:hover { background: #0056b3; }
+
+    .cafe-item {
+      padding: 15px;
+      border-bottom: 1px solid #eee;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .cafe-item:hover { background: #f0f7ff; }
+    .cafe-name { font-weight: bold; font-size: 1.1em; color: #333; display: block; margin-bottom: 4px; }
+    .cafe-address { font-size: 0.85em; color: #666; line-height: 1.4; }
+    h2 { color: #333; margin-top: 0; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
   </style>
 </head>
 <body>
+
+  <div id="sidebar">
+    <h2>Nearby Cafes</h2>
+    <div id="results-list">Click the button to start searching...</div>
+  </div>
+
   <button id="search-btn">Find Cafes Near Me</button>
   <div id="map"></div>
 
@@ -26,13 +59,14 @@
     let map;
     let infoWindow;
 
-    function initMap() {
-      map = new google.maps.Map(document.getElementById("map"), {
-        center: { lat: 12.9716, lng: 77.5946 }, // Default Bangalore
+    async function initMap() {
+      const { Map } = await google.maps.importLibrary("maps");
+      map = new Map(document.getElementById("map"), {
+        center: { lat: 12.9716, lng: 77.5946 },
         zoom: 14,
+        mapId: "DEMO_MAP_ID", // Required for AdvancedMarkerElement
       });
       infoWindow = new google.maps.InfoWindow();
-
       document.getElementById("search-btn").addEventListener("click", findCafesNearMe);
     }
 
@@ -40,63 +74,80 @@
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
           (position) => {
-            const userLoc = {
-              lat: position.coords.latitude,
-              lng: position.coords.longitude,
-            };
+            const userLoc = { lat: position.coords.latitude, lng: position.coords.longitude };
             map.setCenter(userLoc);
-            showCafesPopup(userLoc);
+            searchForCafes(userLoc);
           },
-          () => {
-            alert("Geolocation failed. Using default location.");
-            showCafesPopup({ lat: 12.9716, lng: 77.5946 });
-          }
+          () => alert("Please enable location services in your browser.")
         );
-      } else {
-        alert("Geolocation not supported. Using default location.");
-        showCafesPopup({ lat: 12.9716, lng: 77.5946 });
       }
     }
 
-    async function showCafesPopup(location) {
+    async function searchForCafes(location) {
+      const { Place, SearchNearbyRankPreference } = await google.maps.importLibrary("places");
+      const { AdvancedMarkerElement } = await google.maps.importLibrary("marker");
+
+      const request = {
+        // We explicitly ask for these fields to avoid 'undefined'
+        fields: ["displayName", "location", "formattedAddress"],
+        locationRestriction: { center: location, radius: 2000 },
+        includedPrimaryTypes: ["cafe"],
+        maxResultCount: 15,
+        rankPreference: SearchNearbyRankPreference.POPULARITY,
+      };
+
       try {
-        const { Place } = await google.maps.importLibrary("places");
+        const { places } = await Place.searchNearby(request);
+        const listDiv = document.getElementById("results-list");
+        listDiv.innerHTML = ""; 
 
-        const request = {
-          fields: ["displayName", "location", "formattedAddress"],
-          textQuery: "cafes near me",
-          locationBias: { lat: location.lat, lng: location.lng },
-        };
+        if (places && places.length > 0) {
+          places.forEach((place) => {
+            // FIX: Access .text from displayName object
+            const name = place.displayName ? place.displayName.text : "Unknown Cafe";
+            const address = place.formattedAddress || "Address not available";
 
-        const { places } = await Place.searchByText(request);
+            // 1. Add Marker to Map
+            const marker = new AdvancedMarkerElement({
+              map: map,
+              position: place.location,
+              title: name,
+            });
 
-        if (!places || places.length === 0) {
-          alert("No cafes found nearby.");
-          return;
-        }
+            // 2. Add click listener to Marker
+            marker.addListener("click", () => {
+              infoWindow.setContent(`<div style="padding:5px"><strong>${name}</strong><br>${address}</div>`);
+              infoWindow.open(map, marker);
+            });
 
-        let popupContent = "<strong>Cafes near you:</strong><br><ul>";
-        places.forEach((place) => {
-          popupContent += `<li>${place.displayName.text} - ${place.formattedAddress}</li>`;
-          new google.maps.Marker({
-            position: place.location,
-            map: map,
-            title: place.displayName.text,
+            // 3. Add to Sidebar List
+            const item = document.createElement("div");
+            item.className = "cafe-item";
+            item.innerHTML = `
+              <span class="cafe-name">${name}</span>
+              <span class="cafe-address">${address}</span>
+            `;
+            
+            item.onclick = () => {
+              map.panTo(place.location);
+              map.setZoom(16);
+              infoWindow.setContent(`<div style="padding:5px"><strong>${name}</strong><br>${address}</div>`);
+              infoWindow.open(map, marker);
+            };
+            
+            listDiv.appendChild(item);
           });
-        });
-        popupContent += "</ul>";
-
-        infoWindow.setContent(popupContent);
-        infoWindow.setPosition(location);
-        infoWindow.open(map);
-      } catch (e) {
-        alert("Error finding cafes: " + e.message);
+        } else {
+          listDiv.innerHTML = "No cafes found within 2km.";
+        }
+      } catch (error) {
+        console.error("Search failed:", error);
+        alert("Search error. Check if 'Places API (New)' is enabled in Google Cloud Console.");
       }
     }
   </script>
 
-  <script
-    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBoTBG1D0PFko5uRKSJvL7n7FlmR9-kQy0&libraries=places&callback=initMap"
-    async defer></script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAieeHx5QOBtn_GvRM2UTTZr71dT5mOPCg&libraries=places&callback=initMap&loading=async" defer></script>
+
 </body>
 </html>
